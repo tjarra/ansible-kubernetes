@@ -1,0 +1,129 @@
+- name: Install packages is installed.
+  package:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - yum-utils
+    - device-mapper-persistent-data
+    - lvm2
+    - containerd.io-1.2.13
+    - docker-ce-19.03.8
+    - docker-ce-cli-19.03.8
+
+- name: Create dirs
+  file:
+    path: "{{ item }}"
+    state: directory
+  with_items:
+    - /etc/docker
+    - /etc/systemd/system/docker.service.d
+    - /etc/containerd
+    - /root/.kube
+    
+- name: Copy files
+  template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dst }}"
+  with_items:
+    - src: daemon.json.j2
+      dst: /etc/docker/daemon.json
+    - src: 99-kubernetes-cri.conf.j2
+      dst: /etc/sysctl.d/99-kubernetes-cri.conf
+    - src: containerd.conf.j2
+      dst: /etc/modules-load.d/containerd.conf
+    - src: k8s.conf.j2
+      dst: /etc/sysctl.d/k8s.conf
+
+- name: Exec daemon-reload
+  systemd:
+    daemon_reload: yes
+
+- name: Start docker service
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
+- name: Enable modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - overlay
+    - br_netfilter
+
+- name: Copy crio rpm file to server
+  copy:
+     src: cri-o-1.15.3-1.el7.x86_64.rpm
+     dest: /tmp/cri-o-1.15.3-1.el7.x86_64.rpm
+
+- name: Install crio package
+  yum:
+     name: /tmp/cri-o-1.15.3-1.el7.x86_64.rpm
+     state: present 
+
+- name: Start crio service
+  systemd:
+    name: crio
+    enabled: yes
+    state: started
+
+- name: Run containerd config
+  command: 
+    cmd: containerd config default > /etc/containerd/config.toml
+
+- name: Restart containerd service
+  systemd:
+    name: containerd
+    enabled: yes
+    state: restarted
+
+- name: Run sysctl --system
+  command: 
+    cmd: sysctl --system
+
+- name: Disable SELinux
+  selinux:
+    state: disabled
+
+- name: Install packages kubernetes.
+  package:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Exec daemon-reload
+  systemd:
+    daemon_reload: yes
+
+- name: Enable Kube services
+  systemd:
+    name: kubelet
+    enabled: yes
+    state: restarted
+
+#- name: Run kubeadm init
+#  command:
+#    cmd: kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=/var/run/crio/crio.sock
+
+#- name: Pause to execute kubeadm
+#  pause:
+#    prompt: "Execute kubeadm init --pod-network-cidr=10.244.0.0/16 --cri-socket=/var/run/crio/crio.sock"
+
+#- name: copy file admin.conf
+#  copy:
+#    src: /etc/kubernetes/admin.conf 
+#    dest: /root/.kube/config
+#    remote_src: yes
+
+#- name: copy flannel.yml
+#  copy:
+#    src: kube-flannel.yml
+#    dest: /tmp/kube-flannel.yml
+
+#- name: Create flannel in Cluster
+#  command:
+#    cmd: kubectl apply -f /tmp/kube-flannel.yml
